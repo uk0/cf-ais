@@ -434,6 +434,8 @@ html,body{height:100%}body{margin:0;background:transparent;color:var(--fg);font:
       go.disabled = false; go.textContent = '继续提问';
       esAbort = null;
     }
+    q.value = '';
+    q.reset();
   }
 
   go.onclick = function(){

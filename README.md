@@ -4,6 +4,9 @@
 > 支持图片内容，文本内容。
 
 
+本地开发： `npx wrangler dev --port 80  --local`
+
+
 ### 部署worker
 
 * [worker.js](worker.js) - worker 代码
