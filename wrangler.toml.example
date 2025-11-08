@@ -1,0 +1,9 @@
+name = "cf-ais-worker"
+compatibility_date = "2024-01-01"
+
+main = "worker.js"
+
+[vars]
+OPENAI_API_KEY ="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+SUM_MODEL = "glm-4v-flash"
+OPENAI_API_BASE = "https://open.bigmodel.cn/api/paas/v4"
