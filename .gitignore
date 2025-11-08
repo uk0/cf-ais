@@ -1,4 +1,4 @@
-wrangler.toml
+wrangler.toml.prod
 pnpm-lock.yaml
 node_modules
 

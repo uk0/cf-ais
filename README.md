@@ -7,7 +7,7 @@
 ### 部署worker
 
 * [worker.js](worker.js) - worker 代码
-* [wrangler.toml](wrangler.toml) - 配置ENV
+* [wrangler.toml](wrangler.toml.prod) - 配置ENV
 
 
 * ENV VARIABLES
