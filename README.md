@@ -1,6 +1,9 @@
 ## Cloudflare Worker AIS  - Artificial Intelligence Summary
 
 
+> 支持图片内容，文本内容。
+
+
 ### 部署worker
 
 * [worker.js](worker.js) - worker 代码
