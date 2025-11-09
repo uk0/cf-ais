@@ -37,7 +37,10 @@
 
 ### Changelog
 
+* 支持文本内容总结。
+* 支持图片内容总结。
 * 支持多apikey轮训，可以让各位手中的openai key 发挥更大作用。
+* `DOMAIN_BIND` 白名单功能，防止滥用。
 
 
 ### Demo 

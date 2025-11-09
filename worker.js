@@ -103,6 +103,30 @@ function detectDialect(apiBase, model) {
     if (base.includes('open.bigmodel.cn') || m.startsWith('glm-')) return 'zhipu';
     return 'openai';
 }
+/** 解析域名白名单：env.DOMAIN_BIND = "https://a.com,https://b.com" */
+function getAllowedOrigins(env) {
+    return (env.DOMAIN_BIND || '')
+        .split(',')
+        .map((s) => s.trim().replace(/\/+$/, ''))
+        .filter(Boolean);
+}
+/** 基于请求头判断是否命中白名单（无白名单则放行） */
+function isAllowedByHeaders(request, env) {
+    const allow = getAllowedOrigins(env);
+    console.log("allow list:", allow);
+    if (allow.length === 0) return true;
+    const origin = request.headers.get('Origin') || '';
+    const referer = request.headers.get('Referer') || '';
+    let o = '';
+    let r = '';
+    try { if (origin) o = new URL(origin).origin; } catch {}
+    try { if (referer) r = new URL(referer).origin; } catch {}
+    console.log("origin:", origin);
+    console.log("referer:", referer);
+    console.log("request.headers:", request.headers);
+    // 任一匹配即可
+    return allow.includes(o) || allow.includes(r);
+}
 
 /** 判断是否可因限流而重试/换key */
 async function shouldRotateOnError(resp) {
@@ -344,7 +368,10 @@ export default {
     async fetch(request, env) {
         const { pathname } = new URL(request.url);
         if (request.method === 'OPTIONS') return jsonResponse({}, { status: 204 });
-
+        // 域名绑定：所有受保护路由统一校验（无白名单则放行）
+        if (isAllowedByHeaders(request, env)) {
+            return jsonResponse({ error: 'Forbidden: origin not allowed' }, { status: 403 });
+        }
         // 自检
         if (pathname === '/api/upstream-test') {
             try {
@@ -584,6 +611,10 @@ html,body{height:100%}body{margin:0;background:transparent;color:var(--fg);font:
             } catch (e) {
                 return jsonResponse({ error: String(e) }, { status: 500 });
             }
+        }
+
+        if (pathname === '/'){
+            return  jsonResponse({ ovo: 'Hi this project - by [https://github.com/uk0] ,blog [https://firsh.me]' }, { status: 424 });
         }
 
         return new Response('Not Found', { status: 404 });
