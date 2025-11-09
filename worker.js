@@ -1,7 +1,6 @@
-// /worker.js —— 摘要机器人 (SSE + postMessage + Zhipu/OpenAI 双方言)
+// /worker.js —— 摘要机器人 (SSE + postMessage + Zhipu/OpenAI 双方言 + 429轮询API Key)
 const DEFAULT_MODEL = 'glm-4v-flash';
-
-const DEBUG = false
+const DEBUG = false;
 
 /* ------------ 基础响应 ------------ */
 function jsonResponse(obj, init = {}) {
@@ -15,9 +14,10 @@ function jsonResponse(obj, init = {}) {
             'Cross-Origin-Resource-Policy': 'cross-origin',
             'Cross-Origin-Opener-Policy': 'unsafe-none',
             'Cross-Origin-Embedder-Policy': 'credentialless',
-            'Permissions-Policy': 'autoplay=*, encrypted-media=*, fullscreen=*, picture-in-picture=*',
-            ...(init.headers || {})
-        }
+            'Permissions-Policy':
+                'autoplay=*, encrypted-media=*, fullscreen=*, picture-in-picture=*',
+            ...(init.headers || {}),
+        },
     });
 }
 function htmlResponse(html, init = {}) {
@@ -31,9 +31,10 @@ function htmlResponse(html, init = {}) {
             'Cross-Origin-Resource-Policy': 'cross-origin',
             'Cross-Origin-Opener-Policy': 'unsafe-none',
             'Cross-Origin-Embedder-Policy': 'credentialless',
-            'Permissions-Policy': 'autoplay=*, encrypted-media=*, fullscreen=*, picture-in-picture=*',
-            ...(init.headers || {})
-        }
+            'Permissions-Policy':
+                'autoplay=*, encrypted-media=*, fullscreen=*, picture-in-picture=*',
+            ...(init.headers || {}),
+        },
     });
 }
 
@@ -50,11 +51,22 @@ function stripHTML(html) {
         .trim();
 }
 
+/** 解析 env 中的 API keys（支持单个 or 逗号分隔多个） */
+function getApiKeys(env) {
+    const many = (env.OPENAI_API_KEYS || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    if (many.length > 0) return many;
+    const single = (env.OPENAI_API_KEY || '').trim();
+    return single ? [single] : [];
+}
+
 /** OpenAI 兼容分支的 image parts */
 function buildImageBlocksOpenAI(images = []) {
     const out = [];
     for (const it of images) {
-        let src = typeof it === 'string' ? it : (it?.src || it?.url || '');
+        let src = typeof it === 'string' ? it : it?.src || it?.url || '';
         if (!src) continue;
         if (!src.startsWith('http') && !src.startsWith('data:')) {
             src = `data:image/png;base64,${src}`;
@@ -69,9 +81,10 @@ function buildImageBlocksOpenAI(images = []) {
 function toZhipuImageBlocks(partsOrImages = []) {
     const out = [];
     for (const it of partsOrImages) {
-        let src = typeof it === 'string'
-            ? it
-            : (it?.image_url?.url || it?.src || it?.url || '');
+        let src =
+            typeof it === 'string'
+                ? it
+                : it?.image_url?.url || it?.src || it?.url || '';
         if (!src) continue;
         if (src.startsWith('data:')) {
             const i = src.indexOf('base64,');
@@ -91,25 +104,43 @@ function detectDialect(apiBase, model) {
     return 'openai';
 }
 
-/** 与上游建立 SSE */
-async function streamOpenAI({ env, systemPrompt, userPrompt, userParts, model }) {
-    const apiKey = env.OPENAI_API_KEY;
-    if (!apiKey) return jsonResponse({ error: 'Missing OPENAI_API_KEY' }, { status: 500 });
+/** 判断是否可因限流而重试/换key */
+async function shouldRotateOnError(resp) {
+    if (!resp) return false;
+    if (resp.status === 429) return true;
+    try {
+        const text = await resp.clone().text();
+        if (!text) return false;
+        const low = text.toLowerCase();
+        // 兼容不同厂商/文案
+        return low.includes('rate limit') || low.includes('too many requests');
+    } catch {
+        return false;
+    }
+}
 
-    const apiBase = (env.OPENAI_API_BASE || 'https://open.bigmodel.cn/api/paas/v4').replace(/\/+$/, '');
+/** 与上游建立 SSE —— 增加 429 轮询 API Key */
+async function streamOpenAI({ env, systemPrompt, userPrompt, userParts, model }) {
+    const keys = getApiKeys(env);
+    if (keys.length === 0)
+        return jsonResponse({ error: 'Missing OPENAI_API_KEY(S)' }, { status: 500 });
+
+    const apiBase = (env.OPENAI_API_BASE || 'https://open.bigmodel.cn/api/paas/v4').replace(
+        /\/+$/,
+        ''
+    );
     const usedModel = model || env.SUM_MODEL || DEFAULT_MODEL;
     const dialect = detectDialect(apiBase, usedModel);
-
     const url = `${apiBase}/chat/completions`;
-    let body;
 
+    // 组装 body（与 key 无关）
+    let body;
     if (dialect === 'zhipu') {
-        // 智谱分支：messages[].content = [{type:'text'|'image_url', ...}]
         const content = [];
         if (Array.isArray(userParts) && userParts.length) {
-            const firstText = userParts.find(x => x && x.type === 'text');
+            const firstText = userParts.find((x) => x && x.type === 'text');
             if (firstText?.text) content.push({ type: 'text', text: firstText.text });
-            const others = userParts.filter(x => !x || x.type !== 'text');
+            const others = userParts.filter((x) => !x || x.type !== 'text');
             content.push(...toZhipuImageBlocks(others));
         } else {
             content.push({ type: 'text', text: userPrompt || '' });
@@ -120,11 +151,10 @@ async function streamOpenAI({ env, systemPrompt, userPrompt, userParts, model })
             temperature: 0.2,
             messages: [
                 ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
-                { role: 'user', content }
-            ]
+                { role: 'user', content },
+            ],
         };
     } else {
-        // OpenAI 兼容
         let userContent = userPrompt;
         if (Array.isArray(userParts) && userParts.length) userContent = userParts;
         body = {
@@ -133,73 +163,115 @@ async function streamOpenAI({ env, systemPrompt, userPrompt, userParts, model })
             temperature: 0.2,
             messages: [
                 ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
-                { role: 'user', content: userContent }
-            ]
+                { role: 'user', content: userContent },
+            ],
         };
     }
 
-    if (DEBUG){
-        console.log("======================================================")
-        console.log(JSON.stringify(body))
-        console.log("======================================================")
-    }else{
-        console.log("======================================================")
-        console.log(body)
-        console.log("======================================================")
-    }
-    const upstream = await fetch(url, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-            'Accept': 'text/event-stream'
-        },
-        body: JSON.stringify(body)
-    });
-
-    if (!upstream.ok || !upstream.body) {
-        let errText = '';
-        try { errText = await upstream.text(); } catch {}
-        return jsonResponse(
-            { error: 'Upstream not ok', status: upstream.status, body: errText.slice(0, 2000) },
-            { status: upstream.status || 502 }
-        );
+    if (DEBUG) {
+        console.log('======================================================');
+        console.log(JSON.stringify(body));
+        console.log('======================================================');
+    } else {
+        console.log('======================================================');
+        console.log({ dialect, usedModel });
+        console.log('======================================================');
     }
 
-    const readable = new ReadableStream({
-        async start(controller) {
-            const enc = new TextEncoder();
-            const reader = upstream.body.getReader();
+    // 顺序尝试每个 key：非 429 直接返回；429/RateLimit 则更换 key 继续
+    let lastErrText = '';
+    for (let idx = 0; idx < keys.length; idx++) {
+        const key = keys[idx];
+        let upstream;
+        try {
+            upstream = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${key}`,
+                    'Content-Type': 'application/json',
+                    Accept: 'text/event-stream',
+                },
+                body: JSON.stringify(body),
+            });
+        } catch (e) {
+            lastErrText = `fetch error with key#${idx + 1}: ${String(e)}`;
+            // 网络异常，继续换下一个 key
+            if (idx < keys.length - 1) continue;
+            return jsonResponse(
+                { error: 'Upstream fetch failed', detail: lastErrText },
+                { status: 502 }
+            );
+        }
+
+        if (!upstream.ok || !upstream.body) {
+            // 非 OK：看是否要轮换 key
+            const rotate = await shouldRotateOnError(upstream);
             try {
-                controller.enqueue(enc.encode(`event: open\ndata: {}\n\n`));
-                while (true) {
-                    const { value, done } = await reader.read();
-                    if (done) break;
-                    controller.enqueue(value);
-                }
-                controller.enqueue(enc.encode(`event: done\ndata: [DONE]\n\n`));
-            } catch (e) {
-                controller.enqueue(enc.encode(`event: error\ndata: ${JSON.stringify({ message: String(e) })}\n\n`));
-            } finally {
-                controller.close();
+                lastErrText = await upstream.text();
+            } catch {
+                lastErrText = '';
             }
+            if (rotate && idx < keys.length - 1) {
+                // 换下一个 key 继续
+                console.log(`[rate-limit] rotate key: ${idx + 1} -> ${idx + 2}`);
+                continue;
+            }
+            // 不可重试或已是最后一个 key：返回错误
+            return jsonResponse(
+                {
+                    error: 'Upstream not ok',
+                    status: upstream.status,
+                    body: (lastErrText || '').slice(0, 2000),
+                },
+                { status: upstream.status || 502 }
+            );
         }
-    });
 
-    return new Response(readable, {
-        headers: {
-            'Content-Type': 'text/event-stream; charset=utf-8',
-            'Cache-Control': 'no-cache, no-transform',
-            'Connection': 'keep-alive',
-            'Access-Control-Allow-Origin': '*',
-            'Cross-Origin-Resource-Policy': 'cross-origin'
-        }
-    });
+        // OK：建立 SSE 透传
+        const readable = new ReadableStream({
+            async start(controller) {
+                const enc = new TextEncoder();
+                const reader = upstream.body.getReader();
+                try {
+                    controller.enqueue(enc.encode(`event: open\ndata: {}\n\n`));
+                    while (true) {
+                        const { value, done } = await reader.read();
+                        if (done) break;
+                        controller.enqueue(value);
+                    }
+                    controller.enqueue(enc.encode(`event: done\ndata: [DONE]\n\n`));
+                } catch (e) {
+                    controller.enqueue(
+                        enc.encode(
+                            `event: error\ndata: ${JSON.stringify({ message: String(e) })}\n\n`
+                        )
+                    );
+                } finally {
+                    controller.close();
+                }
+            },
+        });
+
+        return new Response(readable, {
+            headers: {
+                'Content-Type': 'text/event-stream; charset=utf-8',
+                'Cache-Control': 'no-cache, no-transform',
+                Connection: 'keep-alive',
+                'Access-Control-Allow-Origin': '*',
+                'Cross-Origin-Resource-Policy': 'cross-origin',
+            },
+        });
+    }
+
+    // 理论到不了：兜底错误
+    return jsonResponse(
+        { error: 'All API keys failed', detail: (lastErrText || '').slice(0, 2000) },
+        { status: 502 }
+    );
 }
 
 function buildPrompts({ pageText, extraPrompt, images, apiBase, model }) {
-    const systemPrompt =
-        `
+    const systemPrompt = `
 你是一位专业的中文网页内容总结助手。请阅读并理解以下网页正文（可能包含文本、图像及代码片段），输出一个结构化且简洁的总结：
 输出要求：
 1. 关键信息提炼：
@@ -230,21 +302,28 @@ ResponseFormat ：
     🤔 用户问题（如有）：
     - ...
     🧩 TL;DR：一句话总结核心思想。
-        `;
+`;
 
     const prefix = extraPrompt ? `对本文的提问: ${extraPrompt}\n\n` : '';
     const textBlock = `===== 文章内容 Start =====
-                              ${pageText}
-                              ===== 文章内容 End =====`;
+${pageText}
+===== 文章内容 End =====`;
 
     const dialect = detectDialect(apiBase, model);
     if (Array.isArray(images) && images.length) {
         if (dialect === 'zhipu') {
-            // 把图片原样传回，由上游 zhipu 分支统一转为 image_url(url|base64)
-            return { systemPrompt, userParts: [{ type: 'text', text: prefix + textBlock }].concat(images) };
+            // 原样传回，由 zhipu 分支转 image_url(url|base64)
+            return {
+                systemPrompt,
+                userParts: [{ type: 'text', text: prefix + textBlock }].concat(images),
+            };
         }
-        // OpenAI 兼容分支
-        return { systemPrompt, userParts: [{ type: 'text', text: prefix + textBlock }].concat(buildImageBlocksOpenAI(images)) };
+        return {
+            systemPrompt,
+            userParts: [{ type: 'text', text: prefix + textBlock }].concat(
+                buildImageBlocksOpenAI(images)
+            ),
+        };
     }
     return { systemPrompt, userPrompt: prefix + textBlock };
 }
@@ -253,7 +332,7 @@ ResponseFormat ：
 async function fetchAndExtract(url, request) {
     const r = await fetch(url, {
         redirect: 'follow',
-        headers: { 'User-Agent': request.headers.get('User-Agent') || 'Mozilla/5.0' }
+        headers: { 'User-Agent': request.headers.get('User-Agent') || 'Mozilla/5.0' },
     });
     if (!r.ok) throw new Error(`Fetch target failed: ${r.status}`);
     const html = await r.text();
@@ -274,7 +353,7 @@ export default {
                     systemPrompt: '你是诊断助手，回答“pong”两个字。',
                     userPrompt: 'ping',
                     userParts: null,
-                    model: env.SUM_MODEL || DEFAULT_MODEL
+                    model: env.SUM_MODEL || DEFAULT_MODEL,
                 });
             } catch (e) {
                 return jsonResponse({ error: String(e) }, { status: 500 });
@@ -311,7 +390,6 @@ html,body{height:100%}body{margin:0;background:transparent;color:var(--fg);font:
     0 8px 16px rgba(0, 0, 0, 0.2);
   transition: all 0.25s ease;
 }
-
 .dock button:hover {
   background: rgba(255, 255, 255, 0.25);
   box-shadow:
@@ -319,7 +397,6 @@ html,body{height:100%}body{margin:0;background:transparent;color:var(--fg);font:
     0 4px 12px rgba(0, 0, 0, 0.25);
   transform: translateY(-1px);
 }
-
 .dock button:active {
   background: rgba(255, 255, 255, 0.18);
   transform: translateY(0);
@@ -327,7 +404,6 @@ html,body{height:100%}body{margin:0;background:transparent;color:var(--fg);font:
     inset 0 1px 2px rgba(0, 0, 0, 0.4),
     0 2px 6px rgba(0, 0, 0, 0.3);
 }
-
 .dock button[disabled] {
   opacity: 0.6;
   cursor: not-allowed;
@@ -364,7 +440,6 @@ html,body{height:100%}body{margin:0;background:transparent;color:var(--fg);font:
   let esAbort = null;
 
   function openBox(){ box.style.display = 'block'; }
-  
   copyBtn.onclick = async function(){
     try { await navigator.clipboard.writeText(log.textContent || ''); copyBtn.textContent='已复制'; setTimeout(()=>copyBtn.textContent='复制', 1200); } catch(e){}
   };
@@ -414,7 +489,6 @@ html,body{height:100%}body{margin:0;background:transparent;color:var(--fg);font:
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: payload.text || '',
-          // 这里直接透传 images（可为 url 或 data:base64），worker 会按方言处理
           images: Array.isArray(payload.images) ? payload.images : [],
           extra: (payload.extra || '') + (q.value ? ('\\n用户问题: ' + q.value) : '')
         }),
@@ -435,7 +509,7 @@ html,body{height:100%}body{margin:0;background:transparent;color:var(--fg);font:
       esAbort = null;
     }
     q.value = '';
-    q.reset();
+    try{ q.reset && q.reset(); }catch(_){}
   }
 
   go.onclick = function(){
@@ -504,7 +578,8 @@ html,body{height:100%}body{margin:0;background:transparent;color:var(--fg);font:
                 const model = env.SUM_MODEL || DEFAULT_MODEL;
                 const { systemPrompt, userPrompt, userParts } =
                     buildPrompts({ pageText, extraPrompt: extra, images, apiBase, model });
-
+                console.log('[Summarizer] use apiBase', apiBase);
+                console.log('[Summarizer] use model', model);
                 return await streamOpenAI({ env, systemPrompt, userPrompt, userParts, model });
             } catch (e) {
                 return jsonResponse({ error: String(e) }, { status: 500 });
@@ -512,5 +587,5 @@ html,body{height:100%}body{margin:0;background:transparent;color:var(--fg);font:
         }
 
         return new Response('Not Found', { status: 404 });
-    }
+    },
 };
