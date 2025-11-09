@@ -35,6 +35,13 @@
 
 ```
 
+### Changelog
+
+* 支持多apikey轮训，可以让各位手中的openai key 发挥更大作用。
+
+
 ### Demo 
 
 ![example.gif](example.gif)
+
+
