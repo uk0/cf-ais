@@ -18,6 +18,7 @@
   * OPENAI_API_BASE - The default base URL for OpenAI API requests   `optional`
   * OPENAI_API_KEY - Your OpenAI API key for accessing the language model
   * SUM_MODEL - The model to use for summarization (default: glm-4v-flash)  `optional`
+  * DOMAIN_BIND - domain whitelist
 
 
 
