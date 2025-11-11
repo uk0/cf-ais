@@ -113,7 +113,6 @@ function getAllowedOrigins(env) {
 /** 基于请求头判断是否命中白名单（无白名单则放行） */
 function isAllowedByHeaders(request, env) {
     const allow = getAllowedOrigins(env);
-    console.log("allow list:", allow);
     if (allow.length === 0) return true;
     const origin = request.headers.get('Origin') || '';
     const referer = request.headers.get('Referer') || '';
@@ -121,9 +120,6 @@ function isAllowedByHeaders(request, env) {
     let r = '';
     try { if (origin) o = new URL(origin).origin; } catch {}
     try { if (referer) r = new URL(referer).origin; } catch {}
-    console.log("origin:", origin);
-    console.log("referer:", referer);
-    console.log("request.headers:", request.headers);
     // 任一匹配即可
     return allow.includes(o) || allow.includes(r);
 }
@@ -368,10 +364,13 @@ export default {
     async fetch(request, env) {
         const { pathname } = new URL(request.url);
         if (request.method === 'OPTIONS') return jsonResponse({}, { status: 204 });
+
         // 域名绑定：所有受保护路由统一校验（无白名单则放行）
-        if (isAllowedByHeaders(request, env)) {
+        // 修正：只有“不在白名单”时才阻止
+        if (!isAllowedByHeaders(request, env)) {
             return jsonResponse({ error: 'Forbidden: origin not allowed' }, { status: 403 });
         }
+
         // 自检
         if (pathname === '/api/upstream-test') {
             try {
@@ -393,43 +392,103 @@ export default {
 <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Summarizer</title>
 <style>
-:root{--bg:rgba(30,31,34,.55);--fg:#eaeef2;--muted:#b6beca;--border:rgba(255,255,255,.18);--accent:#3b82f6;--blur:saturate(180%) blur(18px);}
-html,body{height:100%}body{margin:0;background:transparent;color:var(--fg);font:13px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC","Microsoft YaHei",system-ui,sans-serif;}
-.dock{position:fixed;right:16px;bottom:16px;display:flex;gap:8px;align-items:center;background:var(--bg);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);border:1px solid var(--border);border-radius:14px;padding:8px 10px;box-shadow:0 12px 40px rgba(0,0,0,.35);}
-.dock input{width:min(46vw,320px);background:transparent;color:var(--fg);border:1px solid var(--border);border-radius:10px;padding:8px 10px;outline:none;}
-.dock input::placeholder{color:var(--muted);}
+:root {
+  --bg: rgba(30, 31, 34, 0.58);
+  --fg: #f4f7fa;
+  --muted: #9fa9b7;
+  --border: rgba(255, 255, 255, 0.18);
+  --accent: #3b82f6;
+  --blur: saturate(180%) blur(20px);
+  --radius: 14px;
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  --inset: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+html, body {
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  color: var(--fg);
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+    Roboto, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC",
+    "Microsoft YaHei", system-ui, sans-serif;
+  overflow: hidden;
+}
+/* === Dock 核心浮层 === */
+.dock {
+  position: fixed;
+  right: 16px;
+  bottom: 14px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  background: var(--bg);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 18px;
+  box-shadow: var(--shadow), var(--inset);
+  transition: all 0.25s ease;
+  z-index: 1000;
+}
+.dock:hover {
+  background: rgba(40, 42, 46, 0.7);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  transform: translateY(-1px);
+}
+/* === 输入框 === */
+.dock input {
+  width: min(48vw, 340px);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  outline: none;
+  font-size: 13px;
+  transition: all 0.2s ease;
+}
+.dock input:focus {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+}
+.dock input::placeholder {
+  color: var(--muted);
+  opacity: 0.8;
+}
+/* === 按钮样式（macOS风 + 光泽感） === */
 .dock button {
-  background: rgba(255, 255, 255, 0.15);
-  backdrop-filter: saturate(180%) blur(20px);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
-  color: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.25), rgba(255, 255, 255, 0.15));
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 10px;
   padding: 8px 14px;
   cursor: pointer;
   white-space: nowrap;
   font-weight: 500;
   letter-spacing: 0.3px;
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.4),
-    0 2px 4px rgba(0, 0, 0, 0.25),
-    0 8px 16px rgba(0, 0, 0, 0.2);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25), 0 8px 18px rgba(0, 0, 0, 0.25);
   transition: all 0.25s ease;
 }
+.dock button svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.9px;
+}
 .dock button:hover {
-  background: rgba(255, 255, 255, 0.25);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.6),
-    0 4px 12px rgba(0, 0, 0, 0.25);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.25));
   transform: translateY(-1px);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
 }
 .dock button:active {
-  background: rgba(255, 255, 255, 0.18);
   transform: translateY(0);
-  box-shadow:
-    inset 0 1px 2px rgba(0, 0, 0, 0.4),
-    0 2px 6px rgba(0, 0, 0, 0.3);
+  background: rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 .dock button[disabled] {
   opacity: 0.6;
@@ -437,11 +496,76 @@ html,body{height:100%}body{margin:0;background:transparent;color:var(--fg);font:
   background: rgba(255, 255, 255, 0.08);
   box-shadow: none;
 }
-.result{position:fixed;right:16px;bottom:76px;width:min(90vw,640px);max-height:min(72vh,560px);overflow:auto;background:var(--bg);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);border:1px solid var(--border);border-radius:14px;padding:12px;box-shadow:0 14px 44px rgba(0,0,0,.38);display:none;white-space:pre-wrap;}
-.row{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:8px}.title{font-weight:600;letter-spacing:.2px}
-.ctrls{display:flex;gap:6px}.ctrls button{background:rgba(255,255,255,.08);border:1px solid var(--border);color:var(--fg);border-radius:9px;padding:6px 10px;cursor:pointer;}
-.ghost{color:var(--muted)}
-</style></head>
+/* === 结果面板（由脚本自动与 dock 对齐） === */
+.result {
+  position: fixed;
+  right: 16px;
+  bottom: 80px;
+  width: min(90vw, 640px);
+  max-height: min(72vh, 560px);
+  overflow: auto;
+  background: var(--bg);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+  display: none;
+  white-space: pre-wrap;
+  transition: opacity 0.25s ease, transform 0.3s ease;
+}
+.result.show {
+  display: block;
+  opacity: 1;
+  transform: translateY(0);
+}
+/* === 顶部控制栏 === */
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.title { font-weight: 600; font-size: 13.5px; letter-spacing: 0.3px; }
+.ctrls { display: flex; gap: 8px; }
+.ctrls button {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s ease;
+}
+.ctrls button:hover { background: rgba(255, 255, 255, 0.2); transform: translateY(-1px); }
+.ctrls button:active { transform: translateY(0); }
+.ghost { color: var(--muted); font-style: italic; }
+/* === 响应式优化 === */
+@media (max-width: 720px) {
+  .dock {
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+    padding: 10px 12px;
+  }
+  .dock input {
+    width: 100%;
+    min-width: 200px;
+  }
+  .result {
+    right: 10px;
+    left: 10px;
+    bottom: 76px;
+    max-height: 70vh;
+  }
+}
+</style>
+</head>
 <body>
 <div class="dock">
   <input id="q" placeholder="可选：围绕主题/查询内容（留空也可）" value="">
@@ -462,18 +586,46 @@ html,body{height:100%}body{margin:0;background:transparent;color:var(--fg);font:
   const box = document.getElementById('result');
   const log = document.getElementById('log');
   const copyBtn = document.getElementById('copyBtn');
+  const dock = document.querySelector('.dock');
 
   let lastPayload = null;
   let esAbort = null;
 
-  function openBox(){ box.style.display = 'block'; }
+  function layout(){
+    try{
+      const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+      const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+      const rect = dock.getBoundingClientRect();
+      const right = Math.max(0, vw - rect.right);
+      const gap = 12; // dock 与 result 的竖直间距
+      const bottom = Math.max(0, vh - rect.top) + gap;
+      const sideMargin = Math.max(right, 16) + 16;
+      const maxW = Math.min(vw - sideMargin - 10, 640);
+      const width = Math.max(320, Math.min(rect.width, maxW)) - 12;
+      // 应用
+      box.style.right = right + 'px';
+      box.style.bottom = bottom + 'px';
+      box.style.width = width + 'px';
+      box.style.maxHeight = Math.min(560, Math.floor(vh * 0.72)) + 'px';
+    }catch(e){}
+  }
+
+  const ro = new ResizeObserver(layout);
+  if (dock) ro.observe(dock);
+  window.addEventListener('resize', layout);
+
+  function openBox(){
+    box.classList.add('show');
+    layout();
+  }
+
   copyBtn.onclick = async function(){
     try { await navigator.clipboard.writeText(log.textContent || ''); copyBtn.textContent='已复制'; setTimeout(()=>copyBtn.textContent='复制', 1200); } catch(e){}
   };
 
   function pingParentReady() {
     try { window.parent && window.parent.postMessage({ type: 'qwq-ready' }, '*'); } catch (e) {}
-    console.log('[Summarizer iframe] sent qwq-ready');
+    layout();
   }
 
   async function readSSE(resp) {
@@ -504,8 +656,8 @@ html,body{height:100%}body{margin:0;background:transparent;color:var(--fg);font:
   async function startPOST(payload){
     openBox();
     log.classList.add('ghost');
-    log.textContent = '[streaming] \\n\\r';
-    go.disabled = true; go.textContent = 'Generating…';
+    log.textContent = '[streaming] \\n';
+    go.disabled = true; go.textContent = '生成中…';
 
     if (esAbort) { esAbort.abort(); }
     esAbort = new AbortController();
@@ -534,6 +686,7 @@ html,body{height:100%}body{margin:0;background:transparent;color:var(--fg);font:
     } finally {
       go.disabled = false; go.textContent = '继续提问';
       esAbort = null;
+      layout();
     }
     q.value = '';
     try{ q.reset && q.reset(); }catch(_){}
@@ -544,6 +697,7 @@ html,body{height:100%}body{margin:0;background:transparent;color:var(--fg);font:
       openBox();
       log.classList.remove('ghost');
       log.textContent = '未收到父页数据，等父页发送或请在父页侧触发。';
+      layout();
       return;
     }
     startPOST(lastPayload);
@@ -553,7 +707,6 @@ html,body{height:100%}body{margin:0;background:transparent;color:var(--fg);font:
     const data = ev && ev.data;
     if (!data) return;
     if (data.type === 'qwq-summarize') {
-      console.log('[Summarizer iframe] got qwq-summarize from', ev.origin);
       lastPayload = {
         text: (data.text || '').toString(),
         images: Array.isArray(data.images) ? data.images : [],

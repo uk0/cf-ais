@@ -1,11 +1,3 @@
-// /summarizer.js —— 父页一行 script：右侧抽屉 + Readability + postMessage（默认不自动）
-// 用法：
-// <link rel="stylesheet" href="/summarizer.css">
-// <script src="/summarizer.js"
-//         data-worker="http://localhost/embed/summarizer"
-//         data-css="/summarizer.css"
-//         data-images="base64"></script>
-
 (function () {
     const tag = document.currentScript;
     const WORKER_URL = (tag && tag.dataset.worker) || 'http://localhost/embed/summarizer';
@@ -52,7 +44,7 @@
               src="${WORKER_URL}" title="Summarizer" loading="lazy"
               allow="autoplay; encrypted-media; fullscreen; clipboard-read; clipboard-write"
               referrerpolicy="no-referrer"
-              style="border:0;width:100%;height:100%;border-radius:12px;"></iframe>
+              style="border:0;width:100%;height:98%;border-radius:12px;"></iframe>
     </div>`;
     document.body.appendChild(drawer);
 
